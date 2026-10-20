@@ -1,0 +1,16 @@
+# Copy to ./colorfan.toml or ~/.config/colorfan/colorfan.toml
+
+# Path to the openrgb binary (or set OPENRGB_PATH)
+openrgb_path = "openrgb"
+
+# Device index from `openrgb --list-devices` (often 0 for the primary Aura controller)
+device = 0
+
+# auto | always | never  (or env OPENRGB_USE_SUDO=0|1|auto)
+use_sudo = "auto"
+
+# Avoid hanging on OpenRGB SDK autoconnect
+no_autoconnect = true
+
+# Aura works best with Direct; Static is also fine (or OPENRGB_MODE)
+mode = "direct"

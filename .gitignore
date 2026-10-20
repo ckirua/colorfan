@@ -1,0 +1,28 @@
+# Rust build
+/target/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local app config (keep *.example tracked)
+colorfan.toml
+*.local.toml
+
+# Local OpenRGB profiles (machine-specific)
+*.orp
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+*.tmp
+.direnv/

@@ -1,0 +1,13 @@
+[package]
+name = "colorfan"
+version = "0.1.0"
+edition = "2021"
+description = "Small TUI to set ASUS Aura / ARGB colors via OpenRGB"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.104"
+crossterm = "0.29.0"
+ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"
