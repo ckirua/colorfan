@@ -32,7 +32,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         crate::config::SudoMode::Auto => "sudo=auto",
     };
     let mode = app.config.mode.as_str();
-    let title = Paragraph::new(Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             " colorfan ",
             Style::default()
@@ -54,8 +54,30 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
             format!("mode={mode}  {sudo}"),
             Style::default().fg(Color::DarkGray),
         ),
-    ]))
-    .block(Block::default().borders(Borders::ALL).title("OpenRGB Aura"));
+    ];
+    if let Some(busy) = app.busy_display() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            busy,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let border = if app.busy {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let title = Paragraph::new(Line::from(spans)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border)
+            .title("OpenRGB Aura"),
+    );
     frame.render_widget(title, area);
 }
 
@@ -97,10 +119,17 @@ fn draw_zones(frame: &mut Frame, area: Rect, app: &App) {
         } else {
             Style::default()
         };
-        items.push(ListItem::new(Line::from(Span::styled(
-            format!("{marker}{label}"),
-            style,
-        ))));
+        let mut spans = vec![Span::styled(format!("{marker}{label}"), style)];
+        if let Some(hex) = app.zone_stored_color(i) {
+            let swatch = color_from_hex(hex).unwrap_or(Color::Gray);
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled("██", Style::default().fg(swatch)));
+            spans.push(Span::styled(
+                format!(" #{hex}"),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        items.push(ListItem::new(Line::from(spans)));
     }
     let list = List::new(items).block(focus_block("Zones  (a = all)", focused));
     frame.render_widget(list, area);
@@ -152,15 +181,25 @@ fn draw_hex(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
-    let ok_style = match app.last_ok {
-        Some(true) => Style::default().fg(Color::Green),
-        Some(false) => Style::default().fg(Color::Red),
-        None => Style::default().fg(Color::Gray),
+    let ok_style = if app.busy {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        match app.last_ok {
+            Some(true) => Style::default().fg(Color::Green),
+            Some(false) => Style::default().fg(Color::Red),
+            None => Style::default().fg(Color::Gray),
+        }
     };
     let mut lines = vec![Line::from(vec![
         Span::styled("cmd  ", Style::default().fg(Color::DarkGray)),
         Span::raw(if app.last_command.is_empty() {
-            "—".into()
+            if app.busy {
+                "(running…)".into()
+            } else {
+                "—".into()
+            }
         } else {
             app.last_command.clone()
         }),
@@ -178,15 +217,31 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
             )));
         }
     }
-    if !app.status_line.is_empty() {
+    if let Some(busy) = app.busy_display() {
+        lines.push(Line::from(Span::styled(
+            format!(" · {busy}  (keys locked until done; q quits)"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+    } else if !app.status_line.is_empty() {
         lines.push(Line::from(Span::styled(
             format!(" · {}", app.status_line),
             Style::default().fg(Color::Cyan),
         )));
     }
-    let p = Paragraph::new(lines)
-        .wrap(Wrap { trim: true })
-        .block(Block::default().borders(Borders::ALL).title("Last run"));
+    let border = if app.busy {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let title = if app.busy { "Last run  · BUSY" } else { "Last run" };
+    let p = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border)
+            .title(title),
+    );
     frame.render_widget(p, area);
 }
 
@@ -207,7 +262,11 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Span::styled(" a ", Style::default().fg(Color::Yellow)),
         Span::raw("all zones  "),
         Span::styled(" p ", Style::default().fg(Color::Yellow)),
-        Span::raw("solid-red profile"),
+        Span::raw("solid-red profile  "),
+        Span::styled(
+            "(apply runs in background)",
+            Style::default().fg(Color::DarkGray),
+        ),
     ]));
     frame.render_widget(help, area);
 }

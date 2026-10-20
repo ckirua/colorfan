@@ -1,9 +1,10 @@
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::config::Config;
+use crate::sdk::{self, SdkClient};
 
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
@@ -18,9 +19,30 @@ pub struct CommandResult {
     pub success: bool,
     pub output: String,
     pub used_sudo: bool,
+    /// Wall time of the apply/list call.
+    pub duration: Duration,
+    /// `sdk` or `cli`.
+    pub backend: &'static str,
 }
 
 pub fn list_devices(cfg: &Config) -> Result<Vec<DeviceInfo>> {
+    if cfg.prefer_sdk && sdk::sdk_port_open() {
+        if let Ok(mut client) = SdkClient::connect() {
+            if let Ok(controllers) = client.list_controllers() {
+                if !controllers.is_empty() {
+                    return Ok(controllers
+                        .into_iter()
+                        .map(|c| DeviceInfo {
+                            index: c.id,
+                            name: c.name,
+                            zones: c.zones.into_iter().map(|z| z.name).collect(),
+                        })
+                        .collect());
+                }
+            }
+        }
+    }
+
     let result = run_openrgb(cfg, &["--list-devices"], cfg.wants_sudo())?;
     if !result.success {
         // Permission-ish failure without sudo: surface a clear hint.
@@ -35,34 +57,71 @@ pub fn list_devices(cfg: &Config) -> Result<Vec<DeviceInfo>> {
     Ok(parse_devices(&result.output))
 }
 
-/// Apply a solid color via OpenRGB CLI.
+/// Apply solid colors via OpenRGB CLI.
 ///
-/// Working pattern on this machine:
-/// `openrgb --noautoconnect -d 0 -m direct -c RRGGBB` (optional `-z N`).
-pub fn apply_color(
+/// A standalone `-z N` call paints that zone then device-wide `UpdateLEDs()` on a
+/// fresh buffer, blanking sibling zones. True per-zone preserve needs either the
+/// SDK (`UpdateZoneLEDs`) or **one** CLI process that sets every zone you care
+/// about with repeated `-d`/`-z`/`-m`/`-c` blocks:
+///
+/// ```text
+/// openrgb --noautoconnect \
+///   -d 0 -z 1 -m direct -c 0000FF \
+///   -d 0 -z 2 -m direct -c 00FF00 \
+///   -d 0 -z 3 -m direct -c FF0000
+/// ```
+///
+/// Pass an empty `zones` slice to apply device-wide (no `-z`).
+pub fn apply_zones(
     cfg: &Config,
     device: u32,
-    zone: Option<u32>,
-    color_hex: &str,
+    zones: &[(u32, &str)],
 ) -> Result<CommandResult> {
-    let color = normalize_hex(color_hex)?;
     let mode = if cfg.mode.trim().is_empty() {
         "direct"
     } else {
         cfg.mode.trim()
     };
 
-    // Build: -d N [-z Z] -m MODE -c RRGGBB
-    let mut args: Vec<String> = vec!["-d".into(), device.to_string()];
-    if let Some(z) = zone {
-        args.push("-z".into());
-        args.push(z.to_string());
+    if zones.is_empty() {
+        bail!("apply_zones requires at least one zone (CLI multi-zone re-apply)");
     }
-    args.push("-m".into());
-    args.push(mode.to_string());
-    args.push("-c".into());
-    args.push(color);
 
+    let mut normalized: Vec<(u32, String)> = Vec::with_capacity(zones.len());
+    for (z, hex) in zones {
+        normalized.push((*z, normalize_hex(hex)?));
+    }
+
+    // Prefer SDK: UpdateZoneLEDs is per-zone and skips OpenRGB cold-start (~7–8s).
+    if cfg.prefer_sdk && sdk::sdk_port_open() {
+        let started = Instant::now();
+        let zone_refs: Vec<(u32, &str)> = normalized
+            .iter()
+            .map(|(z, h)| (*z, h.as_str()))
+            .collect();
+        match try_sdk_apply(device, &zone_refs) {
+            Ok(()) => {
+                let ms = started.elapsed().as_millis();
+                return Ok(CommandResult {
+                    command_line: format!(
+                        "sdk://127.0.0.1:6742 UpdateZoneLEDs ×{} (device {device})",
+                        zone_refs.len()
+                    ),
+                    success: true,
+                    output: format!("SDK apply ok in {ms} ms"),
+                    used_sudo: false,
+                    duration: started.elapsed(),
+                    backend: "sdk",
+                });
+            }
+            Err(e) => {
+                // Fall through to CLI; surface SDK error in CLI path status if CLI also fails.
+                let _ = e;
+            }
+        }
+    }
+
+    let args = build_zone_args(device, mode, &normalized);
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let mut result = run_openrgb(cfg, &arg_refs, cfg.wants_sudo())?;
 
@@ -75,6 +134,27 @@ pub fn apply_color(
     }
 
     Ok(result)
+}
+
+fn try_sdk_apply(device: u32, zones: &[(u32, &str)]) -> Result<()> {
+    let mut client = SdkClient::connect()?;
+    client.apply_zones(device, zones)
+}
+
+/// Build OpenRGB CLI args after `--noautoconnect` for one or more zone blocks.
+pub fn build_zone_args(device: u32, mode: &str, zones: &[(u32, String)]) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    for (z, color) in zones {
+        args.push("-d".into());
+        args.push(device.to_string());
+        args.push("-z".into());
+        args.push(z.to_string());
+        args.push("-m".into());
+        args.push(mode.to_string());
+        args.push("-c".into());
+        args.push(color.clone());
+    }
+    args
 }
 
 /// Load a saved OpenRGB profile (e.g. `solid-red` at ~/.config/OpenRGB/solid-red.orp).
@@ -114,9 +194,11 @@ fn run_openrgb(cfg: &Config, extra: &[&str], use_sudo: bool) -> Result<CommandRe
     let mut cmd = Command::new(program);
     cmd.args(args);
 
+    let started = Instant::now();
     let output = cmd
         .output()
         .with_context(|| format!("spawning `{command_line}`"))?;
+    let duration = started.elapsed();
 
     let mut text = String::new();
     if !output.stdout.is_empty() {
@@ -135,6 +217,8 @@ fn run_openrgb(cfg: &Config, extra: &[&str], use_sudo: bool) -> Result<CommandRe
         success: output.status.success(),
         output: truncate(&text, 800),
         used_sudo: use_sudo,
+        duration,
+        backend: "cli",
     })
 }
 
@@ -290,12 +374,6 @@ fn shell_join(parts: &[String]) -> String {
         .join(" ")
 }
 
-/// Soft timeout hint for UI (openrgb itself is synchronous).
-#[allow(dead_code)]
-pub fn typical_duration() -> Duration {
-    Duration::from_secs(20)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,5 +396,23 @@ mod tests {
     fn normalizes_hex() {
         assert_eq!(normalize_hex("#ff0000").unwrap(), "FF0000");
         assert!(normalize_hex("GG0000").is_err());
+    }
+
+    #[test]
+    fn builds_multi_zone_cli_args() {
+        let zones = vec![
+            (1u32, "0000FF".into()),
+            (2u32, "00FF00".into()),
+            (3u32, "FF0000".into()),
+        ];
+        let args = build_zone_args(0, "direct", &zones);
+        assert_eq!(
+            args,
+            vec![
+                "-d", "0", "-z", "1", "-m", "direct", "-c", "0000FF",
+                "-d", "0", "-z", "2", "-m", "direct", "-c", "00FF00",
+                "-d", "0", "-z", "3", "-m", "direct", "-c", "FF0000",
+            ]
+        );
     }
 }

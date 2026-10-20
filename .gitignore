@@ -2,18 +2,17 @@
 /target/
 
 # Environment / secrets
-.env
-.env.*
+.env*
 !.env.example
 
-# Local app config (keep *.example tracked)
+# Local runtime config (zone colors / machine state) — keep *.example tracked
 colorfan.toml
 *.local.toml
 
 # Local OpenRGB profiles (machine-specific)
 *.orp
 
-# Editor / IDE
+# Editor / OS junk
 .idea/
 .vscode/
 *.swp
@@ -22,7 +21,7 @@ colorfan.toml
 .DS_Store
 Thumbs.db
 
-# Misc
+# Misc local / tooling
 *.log
 *.tmp
 .direnv/

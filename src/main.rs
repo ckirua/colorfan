@@ -1,8 +1,3 @@
-mod app;
-mod config;
-mod openrgb;
-mod ui;
-
 use std::io::{self, stdout};
 use std::time::Duration;
 
@@ -15,8 +10,11 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use app::App;
-use config::Config;
+use colorfan::app::App;
+use colorfan::config::Config;
+use colorfan::openrgb;
+use colorfan::server::OpenRgbServer;
+use colorfan::ui;
 
 fn main() {
     if let Err(e) = run() {
@@ -28,7 +26,28 @@ fn main() {
 fn run() -> Result<()> {
     let config = Config::load().context("loading config")?;
 
-    eprintln!("colorfan: probing OpenRGB devices (may take a few seconds)…");
+    let _sdk_server = if config.prefer_sdk {
+        match OpenRgbServer::ensure(&config) {
+            Ok(s) => {
+                if s.owned() {
+                    eprintln!("colorfan: OpenRGB SDK server ready (started by colorfan)");
+                } else {
+                    eprintln!("colorfan: using existing OpenRGB SDK server on :6742");
+                }
+                Some(s)
+            }
+            Err(e) => {
+                eprintln!(
+                    "colorfan: SDK server unavailable ({e:#}); applies will use CLI (~7–8s each)"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    eprintln!("colorfan: probing OpenRGB devices…");
     let devices = match openrgb::list_devices(&config) {
         Ok(d) => d,
         Err(e) => {
@@ -65,13 +84,19 @@ fn event_loop(
     app: &mut App,
 ) -> Result<()> {
     loop {
+        let _ = app.poll_jobs();
         terminal.draw(|f| ui::draw(f, app))?;
 
-        if !event::poll(Duration::from_millis(200))? {
+        let wait = if app.busy {
+            Duration::from_millis(80)
+        } else {
+            Duration::from_millis(200)
+        };
+
+        if !event::poll(wait)? {
             continue;
         }
         if let Event::Key(key) = event::read()? {
-            // Ignore key-release / repeat noise on some terminals.
             if key.kind != crossterm::event::KeyEventKind::Press {
                 continue;
             }
