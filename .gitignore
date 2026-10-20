@@ -5,7 +5,8 @@
 .env*
 !.env.example
 
-# Local runtime config (zone colors / machine state) — keep *.example tracked
+# Legacy/local runtime config if dropped in the repo — keep *.example tracked.
+# Canonical path is ~/.config/colorfan/colorfan.toml (or $COLORFAN_CONFIG).
 colorfan.toml
 *.local.toml
 

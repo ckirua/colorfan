@@ -84,13 +84,29 @@ openrgb --noautoconnect \
 
 - **Single zone:** updates that zone’s stored color, then (CLI) re-applies every known zone in one process.
 - **All zones:** sets every stored zone color to the chosen color, then applies the same way.
-- **Persistence:** after a successful apply, colors are written to `colorfan.toml` (gitignored) so relaunch does not blank siblings.
+- **Persistence:** after a successful apply, colors are written to `~/.config/colorfan/colorfan.toml` so relaunch does not blank siblings.
 
 **Daisy-chain note:** fans daisy-chained on **one** ARGB header still share a single OpenRGB zone — they cannot get independent colors via multi-zone CLI. Multi-zone re-apply is for **multiple headers** (e.g. Addressable 1/2/3) and for not blanking sibling zones when you change one of them.
 
 ## Config
 
-Optional `colorfan.toml` in the current directory, or `~/.config/colorfan/colorfan.toml`, or `COLORFAN_CONFIG=/path/to.toml`.
+Runtime config (zone colors, device index, etc.) lives in the user XDG config dir — not in the project tree:
+
+| Priority | Path |
+|----------|------|
+| 1 (override) | `$COLORFAN_CONFIG` — any file path |
+| 2 (default) | `$XDG_CONFIG_HOME/colorfan/colorfan.toml` (default `~/.config/colorfan/colorfan.toml`) |
+
+Install from the tracked example:
+
+```bash
+mkdir -p ~/.config/colorfan
+cp colorfan.toml.example ~/.config/colorfan/colorfan.toml
+```
+
+If an old `./colorfan.toml` is still in the working directory and the XDG file is missing, colorfan copies it once to the XDG path on load/save, then uses the new location. Safe to delete the repo-local file afterward (it remains gitignored if someone drops one there).
+
+System-wide paths such as `/etc/colorfan.toml` are not used by default (would need root and is wrong for per-user zone colors); they could be added later as an optional admin install.
 
 See `colorfan.toml.example`.
 
@@ -103,7 +119,8 @@ Environment overrides:
 | `OPENRGB_USE_SUDO` | `0` / `1` / `auto` |
 | `OPENRGB_MODE` | Mode string (default `direct`; `static` also OK) |
 | `COLORFAN_SDK` | `1` (default) use/start SDK server; `0` force CLI applies |
-| `COLORFAN_CONFIG` | Path to config TOML (overrides default search) |
+| `COLORFAN_CONFIG` | Path to config TOML (overrides XDG default entirely) |
+| `XDG_CONFIG_HOME` | Base for the default config dir (default `~/.config`) |
 
 Also used:
 

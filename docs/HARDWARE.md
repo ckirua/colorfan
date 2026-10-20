@@ -41,7 +41,7 @@ Preferred:
 
 Fallback: OpenRGB **CLI** with `--noautoconnect`, same Direct mode. Multi-zone re-apply runs in **one** process so sibling zones are not blanked.
 
-Disable SDK: `COLORFAN_SDK=0` or `prefer_sdk = false` in config.
+Disable SDK: `COLORFAN_SDK=0` or `prefer_sdk = false` in `~/.config/colorfan/colorfan.toml` (or `$COLORFAN_CONFIG`).
 
 ## Soft control alternatives
 

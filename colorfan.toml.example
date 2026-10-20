@@ -1,4 +1,9 @@
-# Copy to ./colorfan.toml or ~/.config/colorfan/colorfan.toml
+# Install (user-writable XDG path — not the project directory):
+#   mkdir -p ~/.config/colorfan
+#   cp colorfan.toml.example ~/.config/colorfan/colorfan.toml
+#
+# Override path entirely with COLORFAN_CONFIG=/path/to.toml
+# Legacy ./colorfan.toml in cwd is migrated once to the XDG path if missing.
 
 # Path to the openrgb binary (or set OPENRGB_PATH)
 openrgb_path = "openrgb"

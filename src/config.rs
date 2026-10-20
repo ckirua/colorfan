@@ -52,15 +52,14 @@ impl Default for Config {
 impl Config {
     pub fn load() -> Result<Self> {
         let mut cfg = Self::default();
+        let path = config_file_path();
 
-        if let Some(path) = config_file_path() {
-            if path.exists() {
-                let text = fs::read_to_string(&path)
-                    .with_context(|| format!("reading {}", path.display()))?;
-                let file_cfg: Config = toml::from_str(&text)
-                    .with_context(|| format!("parsing {}", path.display()))?;
-                cfg = file_cfg;
-            }
+        if path.exists() {
+            let text = fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let file_cfg: Config = toml::from_str(&text)
+                .with_context(|| format!("parsing {}", path.display()))?;
+            cfg = file_cfg;
         }
 
         if let Ok(path) = env::var("OPENRGB_PATH") {
@@ -107,9 +106,10 @@ impl Config {
         matches!(self.use_sudo, SudoMode::Always)
     }
 
-    /// Persist config (including last-known zone colors) to the resolved config path.
+    /// Persist config (including last-known zone colors) to the XDG config path
+    /// (or `COLORFAN_CONFIG` if set). Creates the parent directory if needed.
     pub fn save(&self) -> Result<PathBuf> {
-        let path = config_file_path().unwrap_or_else(|| PathBuf::from("colorfan.toml"));
+        let path = config_file_path();
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() && !parent.exists() {
                 fs::create_dir_all(parent)
@@ -126,21 +126,82 @@ impl Config {
     }
 }
 
-fn config_file_path() -> Option<PathBuf> {
+/// Resolved config file path.
+///
+/// Priority:
+/// 1. `COLORFAN_CONFIG` — absolute override
+/// 2. `$XDG_CONFIG_HOME/colorfan/colorfan.toml` (default `~/.config/colorfan/colorfan.toml`)
+///
+/// If the XDG file is missing but `./colorfan.toml` exists (legacy repo/cwd layout),
+/// it is copied once to the XDG path, then the new path is used.
+pub fn config_file_path() -> PathBuf {
     if let Ok(p) = env::var("COLORFAN_CONFIG") {
-        return Some(PathBuf::from(p));
-    }
-    let cwd = Path::new("colorfan.toml");
-    if cwd.exists() {
-        return Some(cwd.to_path_buf());
-    }
-    if let Ok(home) = env::var("HOME") {
-        let p = PathBuf::from(home).join(".config/colorfan/colorfan.toml");
-        if p.exists() {
-            return Some(p);
+        if !p.is_empty() {
+            return PathBuf::from(p);
         }
     }
-    Some(PathBuf::from("colorfan.toml"))
+
+    let path = default_xdg_config_path();
+    migrate_legacy_cwd_config(&path);
+    path
+}
+
+fn default_xdg_config_path() -> PathBuf {
+    if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg).join("colorfan").join("colorfan.toml");
+        }
+    }
+    if let Ok(home) = env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home)
+                .join(".config")
+                .join("colorfan")
+                .join("colorfan.toml");
+        }
+    }
+    // Last resort when HOME / XDG_CONFIG_HOME are unset (unusual).
+    PathBuf::from("colorfan.toml")
+}
+
+/// One-shot copy from legacy `./colorfan.toml` into the XDG location.
+fn migrate_legacy_cwd_config(xdg: &Path) {
+    if xdg.exists() {
+        return;
+    }
+    let legacy = Path::new("colorfan.toml");
+    if !legacy.is_file() {
+        return;
+    }
+    // Avoid "migrating" onto itself if we fell back to cwd (no HOME).
+    if let (Ok(a), Ok(b)) = (legacy.canonicalize(), xdg.canonicalize()) {
+        if a == b {
+            return;
+        }
+    } else if xdg == legacy {
+        return;
+    }
+
+    if let Some(parent) = xdg.parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            eprintln!(
+                "warning: could not create {} to migrate config: {e}",
+                parent.display()
+            );
+            return;
+        }
+    }
+
+    match fs::copy(legacy, xdg) {
+        Ok(_) => eprintln!(
+            "note: migrated ./colorfan.toml → {} (safe to delete the old file)",
+            xdg.display()
+        ),
+        Err(e) => eprintln!(
+            "warning: could not migrate ./colorfan.toml → {}: {e}",
+            xdg.display()
+        ),
+    }
 }
 
 #[cfg(test)]
